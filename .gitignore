@@ -1,0 +1,25 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# ESP-IDF
+build/
+sdkconfig.old
+managed_components/
+
+# 编辑器
+.vscode/
+.idea/
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 临时文件
+*.log
+*.tmp
+
+# 笔记
+SleepPosture_Notes/

@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>SleepPosture 压力实验台</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: #161616; color: #eee; margin: 0; padding: 16px;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px 0; }
+  .subtitle { color: #777; font-size: 12px; margin-bottom: 12px; }
+
+  .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  button {
+    background: #2d7ef7; color: #fff; border: none;
+    padding: 8px 16px; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: 500;
+  }
+  button:hover { background: #1e6ae0; }
+  button:disabled { background: #444; cursor: not-allowed; }
+  button.danger { background: #d32f2f; }
+  button.danger:hover { background: #b71c1c; }
+  button.ghost { background: #333; }
+  button.ghost:hover { background: #3d3d3d; }
+
+  .status { font-size: 13px; color: #888; }
+  .status.connected { color: #4caf50; }
+
+  .field { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #aaa; }
+  .field input[type=number] {
+    background: #2a2a2a; border: 1px solid #444; color: #eee;
+    padding: 6px 8px; border-radius: 4px; width: 80px; font-family: monospace;
+  }
+  .field input[type=checkbox] { width: 16px; height: 16px; }
+
+  /* 帧率统计条：一眼看出是固件慢还是页面慢 */
+  .stats {
+    margin: 8px 0 12px; padding: 8px 12px;
+    background: #1e1e1e; border: 1px solid #333; border-radius: 8px;
+    font-family: 'Courier New', monospace; font-size: 13px; color: #7fb2e5;
+    display: flex; gap: 20px; flex-wrap: wrap;
+  }
+  .stats b { color: #fff; font-weight: 600; }
+
+  .mat {
+    display: inline-grid; gap: 8px; padding: 14px;
+    background: #202020; border-radius: 12px; border: 1px solid #333;
+    margin-bottom: 12px;
+  }
+  .cell {
+    width: 132px; height: 96px; border-radius: 8px;
+    display: flex; flex-direction: column; justify-content: space-between;
+    padding: 10px; transition: background-color 0.06s;
+    background-color: hsl(240, 70%, 25%);
+  }
+  .cell .label { font-size: 11px; color: rgba(255,255,255,0.75); }
+  .cell .value {
+    font-size: 26px; font-family: 'Courier New', monospace;
+    font-weight: bold; color: #fff;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5); text-align: right;
+  }
+
+  .monitor-head { display: flex; align-items: center; gap: 12px; margin: 4px 0 6px; font-size: 13px; color: #aaa; }
+  .monitor {
+    background: #101010; border: 1px solid #333; border-radius: 8px;
+    padding: 10px; font-family: 'Courier New', monospace;
+    font-size: 12px; color: #bbb; line-height: 1.5;
+    height: 240px; overflow-y: auto; white-space: pre-wrap;
+  }
+  .hint { font-size: 12px; color: #666; margin-top: 8px; }
+  .unsupported { background: #d32f2f; color: #fff; padding: 12px; border-radius: 6px; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+
+<h1>SleepPosture 压力实验台</h1>
+<div class="subtitle">串口读 <code>DATA:...</code> → 4×3 压力矩阵；底部是原始串口 Monitor；统计条显示真实帧率</div>
+
+<div id="unsupported" class="unsupported" style="display:none;"></div>
+
+<div class="controls">
+  <button id="connectBtn">连接串口</button>
+  <button id="disconnectBtn" class="danger" disabled>断开</button>
+  <span id="status" class="status">未连接</span>
+
+  <div class="field">
+    <label>自动量程</label>
+    <input type="checkbox" id="autoRange" checked>
+  </div>
+  <div class="field">
+    <label>满量程:</label>
+    <input type="number" id="maxVal" value="5000" min="100" step="500">
+  </div>
+  <div class="field">
+    <label>平滑窗口:</label>
+    <input type="number" id="smooth" value="1" min="1" max="30">
+  </div>
+</div>
+
+<div class="stats">
+  <span>帧数: <b id="stFrames">0</b></span>
+  <span>帧间隔(最近): <b id="stLast">--</b></span>
+  <span>帧间隔(平均20): <b id="stAvg">--</b></span>
+  <span>速率: <b id="stRate">--</b></span>
+</div>
+
+<div id="mat" class="mat"></div>
+
+<div class="monitor-head">
+  <span>原始串口 Monitor（最新在底部）</span>
+  <label class="field"><input type="checkbox" id="autoScroll" checked> 自动滚动</label>
+  <button id="clearLogBtn" class="ghost">清空</button>
+  <button id="resetStatsBtn" class="ghost">重置统计</button>
+</div>
+<div id="monitor" class="monitor"></div>
+<div class="hint">
+  若“速率”只有 ≈2 帧/秒 → 是固件 sensor.c 里每帧间隔 500ms（不是本页面问题）；
+  平滑窗口=1 表示不平滑（最快响应），调大可抑制数值跳动。
+  测试时请保持本页面处于前台（浏览器后台会暂停渲染）。
+</div>
+
+<script>
+// ============================================================
+// 这个工具的设计目标：
+//   1. 网格直接跟随每一帧更新（默认不平滑）→ 反应最快
+//   2. 底部原始 Monitor：串口来什么就显示什么 → 看原始数据
+//   3. 统计条：帧数 / 帧间隔 / 速率 → 判断"慢"是固件还是页面
+// ============================================================
+
+// ---------- 4×3 网格定义（与接线表一致：C0=肩左 … C11=臀右） ----------
+const ROWS = 4;
+const COLS = 3;
+const LABELS = [
+  ['肩左', '肩中', '肩右'],
+  ['背左', '背中', '背右'],
+  ['腰左', '腰中', '腰右'],
+  ['臀左', '臀中', '臀右'],
+];
+
+// ---------- 创建网格 DOM ----------
+const matEl = document.getElementById('mat');
+matEl.style.gridTemplateColumns = `repeat(${COLS}, 1fr)`;
+const cells = [];
+for (let r = 0; r < ROWS; r++) {
+  for (let c = 0; c < COLS; c++) {
+    const ch = r * COLS + c;                 // 通道号 0~11
+    const cell = document.createElement('div');
+    cell.className = 'cell';
+    cell.innerHTML = `<div class="label">${LABELS[r][c]} C${ch}</div><div class="value">0</div>`;
+    matEl.appendChild(cell);
+    cells.push({ el: cell, valueEl: cell.querySelector('.value') });
+  }
+}
+
+// ---------- 元素引用 ----------
+const $ = (id) => document.getElementById(id);
+const monitorEl = $('monitor');
+
+// ---------- 运行状态 ----------
+let port = null;                 // 串口对象
+let reader = null;               // 读取器
+let keepReading = false;         // 读取循环开关
+let buffer = '';                 // 串口行缓冲
+
+const history = Array.from({ length: ROWS * COLS }, () => []);  // 每格的历史值（平滑用）
+
+let pendingFrame = null;         // 待渲染的最新一帧（合并多次到达）
+let statsDirty = false;          // 统计条需要重绘
+let logDirty = false;            // monitor 需要重绘
+
+let frameCount = 0;              // 收到的 DATA 帧总数
+let lastFrameTs = 0;             // 上一帧到达时刻（performance.now）
+const intervals = [];            // 最近若干帧的间隔（ms）
+const autoMaxBuf = [];           // 自动量程用：最近若干帧的最大值
+
+const logLines = [];             // monitor 行缓冲（最新的在最后）
+const LOG_MAX = 300;             // monitor 最多保留多少行
+
+// ---------- 小工具：时间格式化 ----------
+const pad = (n, len = 2) => String(n).padStart(len, '0');
+function fmtTime(d) {
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+}
+
+// ---------- 数值 → 颜色（蓝→红） ----------
+function valueToColor(v, max) {
+  if (v < 0) v = 0;
+  const t = Math.min(v / max, 1);
+  const hue = 240 * (1 - t);
+  const sat = 70 + t * 20;
+  const light = 22 + t * 33;
+  return `hsl(${hue}, ${sat}%, ${light}%)`;
+}
+
+// ---------- 解析 DATA 行 ----------
+// 固件打印形如：  I (12345) sensor: DATA:12,34,56,...
+function parseData(line) {
+  const m = line.match(/DATA[:：]\s*(-?[\d,\s]+)/i);
+  if (!m) return null;
+  const nums = m[1].split(/[\s,]+/).filter(s => s !== '').map(s => parseInt(s, 10));
+  if (nums.length < ROWS * COLS || nums.some(isNaN)) return null;
+  // 【Claude修改】新固件格式是 DATA:时间戳,12个值（共13个数）。
+  // 取"最后12个数" → 新旧格式（12个或13个）都能正确解析。
+  return nums.slice(-ROWS * COLS);
+}
+
+// ---------- 渲染：网格 ----------
+function renderGrid(values) {
+  const win = Math.max(1, parseInt($('smooth').value, 10) || 1);
+  const auto = $('autoRange').checked;
+  const manualMax = parseFloat($('maxVal').value) || 5000;
+
+  // 自动量程：取最近30帧里出现过的最大值
+  if (auto) {
+    autoMaxBuf.push(Math.max(0, ...values));
+    if (autoMaxBuf.length > 30) autoMaxBuf.shift();
+  }
+  const max = auto ? Math.max(200, ...autoMaxBuf) * 1.1 : manualMax;
+
+  for (let i = 0; i < cells.length; i++) {
+    const raw = values[i] ?? 0;
+    const h = history[i];
+    h.push(raw);
+    if (h.length > win) h.shift();
+    const avg = h.reduce((a, b) => a + b, 0) / h.length;
+    cells[i].valueEl.textContent = Math.round(avg);
+    cells[i].el.style.backgroundColor = valueToColor(avg, max);
+  }
+}
+
+// ---------- 渲染：统计条 ----------
+function renderStats() {
+  const n = intervals.length;
+  const last = n ? intervals[n - 1] : 0;
+  const avg = n ? intervals.reduce((a, b) => a + b, 0) / n : 0;
+  $('stFrames').textContent = frameCount;
+  $('stLast').textContent = n ? last.toFixed(0) + ' ms' : '--';
+  $('stAvg').textContent = n ? avg.toFixed(0) + ' ms' : '--';
+  $('stRate').textContent = avg > 0 ? (1000 / avg).toFixed(1) + ' 帧/秒' : '--';
+}
+
+// ---------- 渲染：monitor ----------
+function renderLog() {
+  monitorEl.textContent = logLines.join('\n');
+  if ($('autoScroll').checked) monitorEl.scrollTop = monitorEl.scrollHeight;
+}
+
+// ---------- 统一渲染循环（每帧最多重绘一次，避免高频时刷爆） ----------
+function tick() {
+  if (pendingFrame) { renderGrid(pendingFrame); pendingFrame = null; }
+  if (statsDirty) { renderStats(); statsDirty = false; }
+  if (logDirty) { renderLog(); logDirty = false; }
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+// ---------- 处理一行串口数据 ----------
+function handleLine(rawLine) {
+  const line = rawLine.replace(/\r$/, '');
+
+  // 1. monitor 永远记录所有行（包括 ESP-IDF 的日志）
+  logLines.push(`[${fmtTime(new Date())}] ${line}`);
+  if (logLines.length > LOG_MAX) logLines.splice(0, logLines.length - LOG_MAX);
+  logDirty = true;
+
+  // 2. 尝试解析成压力帧
+  const vals = parseData(line);
+  if (!vals) return;
+
+  // 3. 帧统计
+  const now = performance.now();
+  frameCount++;
+  if (lastFrameTs > 0) {
+    intervals.push(now - lastFrameTs);
+    if (intervals.length > 20) intervals.shift();
+  }
+  lastFrameTs = now;
+  statsDirty = true;
+
+  // 4. 交给渲染循环（高频时自然合并成"最新一帧优先"）
+  pendingFrame = vals;
+}
+
+// ---------- 串口连接 ----------
+async function connect() {
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+
+    $('connectBtn').disabled = true;
+    $('disconnectBtn').disabled = false;
+    const statusEl = $('status');
+    statusEl.textContent = '已连接，读取中...';
+    statusEl.classList.add('connected');
+
+    logLines.push(`[${fmtTime(new Date())}] --- 串口已连接 115200 ---`);
+    logDirty = true;
+
+    keepReading = true;
+    readLoop();
+  } catch (err) {
+    logLines.push(`[${fmtTime(new Date())}] 连接失败: ${err.message}`);
+    logDirty = true;
+  }
+}
+
+// ---------- 读取循环 ----------
+async function readLoop() {
+  const decoder = new TextDecoder();
+  reader = port.readable.getReader();
+  try {
+    while (keepReading) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 1);
+        handleLine(line);
+      }
+      if (buffer.length > 4096) buffer = buffer.slice(-1024);   // 防异常数据撑爆缓冲
+    }
+  } catch (err) {
+    logLines.push(`[${fmtTime(new Date())}] 读取错误: ${err.message}`);
+    logDirty = true;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+// ---------- 断开 ----------
+async function disconnect() {
+  keepReading = false;
+  try {
+    if (reader) await reader.cancel();
+    if (port) await port.close();
+  } catch (err) { /* 忽略关闭时的异常 */ }
+  port = null;
+  reader = null;
+  $('connectBtn').disabled = false;
+  $('disconnectBtn').disabled = true;
+  const statusEl = $('status');
+  statusEl.textContent = '未连接';
+  statusEl.classList.remove('connected');
+  logLines.push(`[${fmtTime(new Date())}] --- 串口已断开 ---`);
+  logDirty = true;
+}
+
+// ---------- 按钮绑定 ----------
+if ('serial' in navigator) {
+  $('connectBtn').addEventListener('click', connect);
+  $('disconnectBtn').addEventListener('click', disconnect);
+  $('clearLogBtn').addEventListener('click', () => { logLines.length = 0; logDirty = true; });
+  $('resetStatsBtn').addEventListener('click', () => {
+    frameCount = 0; lastFrameTs = 0; intervals.length = 0; autoMaxBuf.length = 0;
+    statsDirty = true;
+  });
+} else {
+  const el = $('unsupported');
+  el.style.display = 'block';
+  el.textContent = '您的浏览器不支持 Web Serial API。请使用 Chrome 或 Edge 89+ 打开本页面。';
+  $('connectBtn').disabled = true;
+}
+</script>
+
+</body>
+</html>

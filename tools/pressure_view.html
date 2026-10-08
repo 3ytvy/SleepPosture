@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>SleepPosture 压力可视化</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: #1a1a1a;
+    color: #eee;
+    margin: 0;
+    padding: 20px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px 0; }
+  .subtitle { color: #888; font-size: 13px; margin-bottom: 20px; }
+
+  .controls {
+    display: flex; gap: 12px; align-items: center;
+    margin-bottom: 20px; flex-wrap: wrap;
+  }
+  button {
+    background: #2d7ef7; color: white; border: none;
+    padding: 10px 20px; border-radius: 6px;
+    font-size: 14px; cursor: pointer; font-weight: 500;
+  }
+  button:hover { background: #1e6ae0; }
+  button:disabled { background: #444; cursor: not-allowed; }
+  button.danger { background: #d32f2f; }
+  button.danger:hover { background: #b71c1c; }
+
+  .status { font-size: 13px; color: #888; }
+  .status.connected { color: #4caf50; }
+
+  .range-input {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 13px; color: #aaa;
+  }
+  .range-input input {
+    background: #2a2a2a; border: 1px solid #444;
+    color: #eee; padding: 6px 10px; border-radius: 4px;
+    width: 80px; font-family: monospace;
+  }
+
+  .mat {
+    display: inline-grid; gap: 8px; padding: 16px;
+    background: #252525; border-radius: 12px;
+    border: 1px solid #333;
+  }
+  .cell {
+    width: 120px; height: 100px; border-radius: 8px;
+    display: flex; flex-direction: column; justify-content: space-between;
+    padding: 10px; transition: background-color 0.15s;
+    background-color: hsl(240, 70%, 25%);
+  }
+  .cell .label {
+    font-size: 11px; color: rgba(255,255,255,0.75);
+    font-weight: 500;
+  }
+  .cell .value {
+    font-size: 24px; font-family: 'Courier New', monospace;
+    font-weight: bold; color: white;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    text-align: right;
+  }
+
+  .log {
+    margin-top: 20px; background: #1e1e1e; border-radius: 8px;
+    padding: 12px; font-family: 'Courier New', monospace;
+    font-size: 11px; color: #888; max-height: 140px;
+    overflow-y: auto; border: 1px solid #333;
+    white-space: pre-wrap;
+  }
+  .unsupported {
+    background: #d32f2f; color: white; padding: 12px;
+    border-radius: 6px; margin-bottom: 20px;
+  }
+</style>
+</head>
+<body>
+
+<h1>SleepPosture 压力可视化</h1>
+<div class="subtitle">通过浏览器串口 API 读取 ESP32 输出的 <code>DATA:...</code> 格式数据，4×3 矩阵实时可视化</div>
+
+<div id="unsupported" class="unsupported" style="display:none;"></div>
+
+<div class="controls">
+  <button id="connectBtn">连接串口</button>
+  <button id="disconnectBtn" class="danger" disabled>断开</button>
+  <span id="status" class="status">未连接</span>
+  <div class="range-input">
+    <label>满量程:</label>
+    <input type="number" id="maxVal" value="3000" min="100" step="100">
+  </div>
+  <div class="range-input">
+    <label>平滑窗口:</label>
+    <input type="number" id="smooth" value="5" min="1" max="30">
+  </div>
+</div>
+
+<div id="mat" class="mat"></div>
+
+<div class="log" id="log">等待连接...</div>
+
+<script>
+const ROWS = 4;
+const COLS = 3;
+const LABELS = [
+  ['肩左', '肩中', '肩右'],
+  ['背左', '背中', '背右'],
+  ['腰左', '腰中', '腰右'],
+  ['臀左', '臀中', '臀右'],
+];
+
+// 生成网格
+const matEl = document.getElementById('mat');
+matEl.style.gridTemplateColumns = `repeat(${COLS}, 1fr)`;
+const cells = [];
+for (let r = 0; r < ROWS; r++) {
+  for (let c = 0; c < COLS; c++) {
+    const cell = document.createElement('div');
+    cell.className = 'cell';
+    cell.innerHTML = `<div class="label">${LABELS[r][c]}</div><div class="value">0</div>`;
+    matEl.appendChild(cell);
+    cells.push({ el: cell, valueEl: cell.querySelector('.value') });
+  }
+}
+
+// 状态
+let port = null;
+let reader = null;
+let keepReading = false;
+let buffer = '';
+const history = Array(ROWS * COLS).fill(null).map(() => []);
+
+function getMaxVal() {
+  return parseFloat(document.getElementById('maxVal').value) || 3000;
+}
+function getSmoothWindow() {
+  return parseInt(document.getElementById('smooth').value) || 5;
+}
+
+// 值 → 颜色（蓝→红）
+function valueToColor(v, max) {
+  if (v < 0) v = 0;
+  const t = Math.min(v / max, 1);
+  const hue = 240 * (1 - t);
+  const sat = 70 + t * 20;
+  const light = 25 + t * 30;
+  return `hsl(${hue}, ${sat}%, ${light}%)`;
+}
+
+// 更新网格
+function updateGrid(values) {
+  const max = getMaxVal();
+  const win = getSmoothWindow();
+  for (let i = 0; i < cells.length; i++) {
+    const raw = values[i] || 0;
+    history[i].push(raw);
+    if (history[i].length > win) history[i].shift();
+    const avg = history[i].reduce((a, b) => a + b, 0) / history[i].length;
+    cells[i].valueEl.textContent = Math.round(avg);
+    cells[i].el.style.backgroundColor = valueToColor(avg, max);
+  }
+}
+
+// 解析一行
+function parseLine(line) {
+  const m = line.match(/DATA[:：]\s*([\d\s,\-]+)/i);
+  if (!m) return null;
+  const nums = m[1].split(/[\s,]+/).filter(s => s.length > 0).map(s => parseInt(s, 10));
+  if (nums.length < ROWS * COLS) return null;
+  return nums.slice(0, ROWS * COLS);
+}
+
+// 日志
+const logEl = document.getElementById('log');
+function log(msg) {
+  const now = new Date();
+  const t = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+  logEl.textContent = `[${t}] ${msg}\n` + logEl.textContent;
+  const lines = logEl.textContent.split('\n');
+  if (lines.length > 50) logEl.textContent = lines.slice(0, 50).join('\n');
+}
+
+// 连接串口
+async function connect() {
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+
+    document.getElementById('connectBtn').disabled = true;
+    document.getElementById('disconnectBtn').disabled = false;
+    const statusEl = document.getElementById('status');
+    statusEl.textContent = '已连接，读取中...';
+    statusEl.classList.add('connected');
+    log('串口已连接');
+
+    keepReading = true;
+    readLoop();
+  } catch (err) {
+    log('连接失败: ' + err.message);
+    console.error(err);
+  }
+}
+
+// 读取循环
+async function readLoop() {
+  const textDecoder = new TextDecoder();
+  reader = port.readable.getReader();
+  try {
+    while (keepReading) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += textDecoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, idx).replace(/\r$/, '');
+        buffer = buffer.slice(idx + 1);
+        const vals = parseLine(line);
+        if (vals) updateGrid(vals);
+      }
+      if (buffer.length > 4096) buffer = buffer.slice(-1024);
+    }
+  } catch (err) {
+    log('读取错误: ' + err.message);
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+// 断开
+async function disconnect() {
+  keepReading = false;
+  try {
+    if (reader) await reader.cancel();
+    if (port) await port.close();
+  } catch (err) {
+    console.error(err);
+  }
+  port = null;
+  reader = null;
+  document.getElementById('connectBtn').disabled = false;
+  document.getElementById('disconnectBtn').disabled = true;
+  const statusEl = document.getElementById('status');
+  statusEl.textContent = '未连接';
+  statusEl.classList.remove('connected');
+  log('串口已断开');
+}
+
+// 绑定
+if ('serial' in navigator) {
+  document.getElementById('connectBtn').addEventListener('click', connect);
+  document.getElementById('disconnectBtn').addEventListener('click', disconnect);
+} else {
+  const el = document.getElementById('unsupported');
+  el.style.display = 'block';
+  el.textContent = '您的浏览器不支持 Web Serial API。请使用 Chrome 或 Edge 89+，并通过 http://localhost 或 HTTPS 打开本页面。';
+  document.getElementById('connectBtn').disabled = true;
+}
+</script>
+
+</body>
+</html>

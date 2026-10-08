@@ -87,7 +87,6 @@ void app_main(void)
     }
 
     // 【Claude修改】创建推理任务（TFLite Micro，优先级低于采集）
-    // （mqtt任务暂时不创建，mqtt_client还没写）
     ret = xTaskCreate(ai_task, "ai", STACK_AI,
                       NULL, PRIORITY_AI, NULL);
     if (ret != pdPASS) {
@@ -95,5 +94,14 @@ void app_main(void)
         return;
     }
 
-    ESP_LOGI(TAG, "任务创建完成（sensor + ai）");
+    // 【Claude修改】创建通信任务（MQTT上传云端，优先级最低）
+    // WiFi已经在上面连好了；MQTT客户端在任务里启动（TLS + 自动重连）
+    ret = xTaskCreate(mqtt_task, "mqtt", STACK_MQTT,
+                      NULL, PRIORITY_MQTT, NULL);
+    if (ret != pdPASS) {
+        ESP_LOGE(TAG, "mqtt_task 创建失败");
+        return;
+    }
+
+    ESP_LOGI(TAG, "任务创建完成（sensor + ai + mqtt）");
 }

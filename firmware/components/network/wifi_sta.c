@@ -21,6 +21,8 @@
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_netif.h"
+#include "esp_netif_sntp.h"    // 【Claude修改】SNTP时间同步（TLS证书校验需要准确时间）
+#include <stdbool.h>           // 【Claude修改】bool
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
@@ -92,6 +94,18 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         ESP_LOGI(TAG, "获取IP: " IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;  // 重置重试计数
+
+        // 【Claude修改】同步网络时间（第一次拿到IP时启动一次）：
+        //   TLS证书校验需要准确的系统时钟——没有时间的话，
+        //   证书会被认为"还没生效"，MQTT(TLS)握手会失败。
+        static bool sntp_started = false;
+        if (!sntp_started) {
+            sntp_started = true;
+            esp_sntp_config_t sntp_cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("ntp.aliyun.com");
+            esp_netif_sntp_init(&sntp_cfg);
+            ESP_LOGI(TAG, "SNTP时间同步已启动 (ntp.aliyun.com)");
+        }
+
         // 设置连接成功标志
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }

@@ -7,7 +7,7 @@ idf_component_register(
     # SRCS：包含哪些.c源文件
     SRCS
         "wifi_sta.c"
-        "mqtt_client.c"
+        "mqtt_app.c"       # 【Claude修改】MQTT封装（改名避免和IDF的mqtt_client.h撞名）
         "tcp_server.c"     # 【Claude修改】TCP服务器
 
     # INCLUDE_DIRS：头文件搜索路径
@@ -27,5 +27,7 @@ idf_component_register(
         esp_event
         esp_netif
         lwip          # 【Claude修改】socket API（tcp_server.c 用）
+        mqtt          # 【Claude修改】esp-mqtt（mqtt_client.c 用）
+        mbedtls       # 【Claude修改】esp_crt_bundle 内置CA证书仓库
         nvs_flash
 )

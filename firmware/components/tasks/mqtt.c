@@ -1,6 +1,6 @@
 /**
  * mqtt.c
- * 通信任务（【Claude修改】本次实现）
+ * 通信任务
  *
  * 职责：
  *   1. 兜底等WiFi就绪（app_main里已经连过）
@@ -32,7 +32,7 @@ extern QueueHandle_t result_queue;
 // 上传策略参数
 #define PUBLISH_HEARTBEAT_S  30      // 心跳间隔（秒）
 
-// 状态 → 英文名（JSON里用英文，电脑端/云端处理最省心）
+// 状态 → 英文名（JSON里用英文）
 static const char *posture_name(uint8_t p)
 {
     switch (p) {

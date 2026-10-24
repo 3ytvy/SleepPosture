@@ -1,5 +1,5 @@
 ## 组件依赖声明（编译时由ESP-IDF组件管理器自动下载，下载到 managed_components/）
-## 【Claude修改】注意：文件名必须是 idf_component.yml！
+## 注意：文件名必须是 idf_component.yml！
 ## 如果写成 idf_component.yaml，组件管理器不会识别（会静默跳过不下载）——
 ## 之前练习项目就栽过这个坑。
 dependencies:

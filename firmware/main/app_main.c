@@ -9,8 +9,9 @@
 #include "sensor.h"
 #include "ai.h"
 #include "mqtt.h"
-#include "wifi_sta.h"    // 【Claude修改】WiFi连接（无线数据链路的起点）
-#include "tcp_server.h"  // 【Claude修改】TCP服务器（无线数据传输的出口）
+#include "wifi_sta.h"    // WiFi连接（无线数据链路的起点）
+#include "tcp_server.h"  // TCP服务器（无线数据传输的出口）
+#include "web_server.h"  // 网页服务器（手机浏览器查看状态）
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -43,7 +44,7 @@ void app_main(void)
     ESP_LOGI(TAG, "ADS1115 初始化完成");
 
     // --------------------------------------------------------
-    // 【Claude修改】连接WiFi（无线数据链路的起点）
+    // 连接WiFi（无线数据链路的起点）
     // --------------------------------------------------------
     // 顺序说明：NVS在最开头已经初始化过了（WiFi驱动必须要有NVS）。
     // wifi_sta_init() 只做初始化；wifi_sta_connect() 阻塞等待，最多30秒。
@@ -56,11 +57,17 @@ void app_main(void)
     }
 
     // --------------------------------------------------------
-    // 【Claude修改】启动TCP服务器（无线数据传输的出口）
+    // 启动TCP服务器（无线数据传输的出口）
     // --------------------------------------------------------
     // 不用等WiFi连上再启动：bind/listen不依赖IP，电脑随时连进来都能接住；
     // WiFi断线重连也不影响这个socket。
     tcp_server_start(TCP_SERVER_PORT);
+
+    // --------------------------------------------------------
+    // 启动网页服务器（手机查看用）
+    // --------------------------------------------------------
+    // 手机连同一个WiFi，浏览器打开 http://<ESP32的IP>/ 就能看实时状态。
+    web_server_start();
 
     // 创建队列
     sensor_queue = xQueueCreate(SENSOR_QUEUE_DEPTH, sizeof(pressure_frame_t));
@@ -86,7 +93,7 @@ void app_main(void)
         return;
     }
 
-    // 【Claude修改】创建推理任务（TFLite Micro，优先级低于采集）
+    // 创建推理任务（TFLite Micro，优先级低于采集）
     ret = xTaskCreate(ai_task, "ai", STACK_AI,
                       NULL, PRIORITY_AI, NULL);
     if (ret != pdPASS) {
@@ -94,7 +101,7 @@ void app_main(void)
         return;
     }
 
-    // 【Claude修改】创建通信任务（MQTT上传云端，优先级最低）
+    // 创建通信任务（MQTT上传云端，优先级最低）
     // WiFi已经在上面连好了；MQTT客户端在任务里启动（TLS + 自动重连）
     ret = xTaskCreate(mqtt_task, "mqtt", STACK_MQTT,
                       NULL, PRIORITY_MQTT, NULL);

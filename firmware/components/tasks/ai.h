@@ -11,7 +11,7 @@
  *   4. 调用模型推理
  *   5. 结果发到result_queue
  *
- * 【Claude修改】注意：实现文件是 ai.cpp（用C++编译，因为TFLite Micro是C++库）。
+ * 注意：实现文件是 ai.cpp（用C++编译，因为TFLite Micro是C++库）。
  * 这里用 extern "C" 包一层，保证 app_main.c 等 C 文件也能正常调用 ai_task。
  */
 

@@ -4,7 +4,7 @@
 
 /**
  * mqtt_app.h
- * MQTT应用层封装（【Claude修改】本次实现）
+ * MQTT应用层封装（本次实现）
  *
  * 服务器：EMQX Cloud Serverless（TLS加密，端口8883）
  *
@@ -28,5 +28,5 @@ void mqtt_client_start(void);
  */
 int mqtt_client_publish(const char *payload);
 
-/** 是否已连接 @return true=已连接 */
+/* 是否已连接 @return true=已连接 */
 bool mqtt_client_is_connected(void);

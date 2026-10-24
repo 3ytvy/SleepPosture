@@ -11,7 +11,7 @@ collect_data.py — SleepPosture 数据采集工具（可视化 + 打标签 + �
        时间到了响铃3秒 → 自动结束 → 弹保存确认窗口
     5. 断线自动重连
 
-【Claude修改 2026-10-08】本版新增：定时采集、结束弹"确认保存"窗口。
+【 2026-10-08】本版新增：定时采集、结束弹"确认保存"窗口。
     规则：每次采集结束（手动按空格结束 / 定时自动结束）都会弹窗确认是否保存。
     每次确认保存 = 单独一个CSV文件（丢弃则不落盘）。
 
@@ -66,7 +66,7 @@ DEFAULT_DURATION_S = 120      # 定时模式：默认采集时长（秒）
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "ai" / "data"
 
-# 【Claude修改】标签体系定为三类：0=仰卧，1=左侧卧，2=右侧卧（不要俯卧了）
+# 标签体系定为三类：0=仰卧，1=左侧卧，2=右侧卧（不要俯卧了）
 POSTURE_NAMES = {0: "仰卧", 1: "左侧卧", 2: "右侧卧", -1: "未标注"}
 
 # 4×3 网格的名字（和接线表一致：C0=肩左 … C11=臀右）
@@ -198,7 +198,7 @@ class App:
         root.title("SleepPosture 数据采集")
         root.configure(bg="#1e1e1e")
 
-        # ---------- 采集状态机（【Claude修改】三种状态） ----------
+        # ---------- 采集状态机（三种状态） ----------
         #   idle      ：待机（没在采集）
         #   prepare   ：定时模式的倒计时中（还没开始采集）
         #   recording ：采集中
@@ -245,7 +245,7 @@ class App:
                                     padx=10, pady=4)
         self.rec_display.pack(side="right", padx=8)
 
-        # ---------- 第二行：定时采集选项（【Claude修改】新增） ----------
+        # ---------- 第二行：定时采集选项（新增） ----------
         opt = tk.Frame(root, bg="#1e1e1e")
         opt.pack(fill="x", padx=10, pady=2)
 

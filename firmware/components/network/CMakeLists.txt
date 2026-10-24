@@ -7,11 +7,16 @@ idf_component_register(
     # SRCS：包含哪些.c源文件
     SRCS
         "wifi_sta.c"
-        "mqtt_app.c"       # 【Claude修改】MQTT封装（改名避免和IDF的mqtt_client.h撞名）
-        "tcp_server.c"     # 【Claude修改】TCP服务器
+        "mqtt_app.c"       # MQTT封装（改名避免和IDF的mqtt_client.h撞名）
+        "tcp_server.c"     # TCP服务器
+        "web_server.c"     # 网页服务器（手机查看）
+        "status_store.c"   # 最新状态快照（ai→web共享）
 
     # INCLUDE_DIRS：头文件搜索路径
     INCLUDE_DIRS "."
+
+    # 嵌入的网页（编译进固件的Flash；生成 _binary_index_html_start 符号）
+    EMBED_FILES "index.html"
 
     # REQUIRES：依赖哪些组件
     #   freertos  → FreeRTOS（事件循环、任务）
@@ -26,8 +31,9 @@ idf_component_register(
         esp_wifi
         esp_event
         esp_netif
-        lwip          # 【Claude修改】socket API（tcp_server.c 用）
-        mqtt          # 【Claude修改】esp-mqtt（mqtt_client.c 用）
-        mbedtls       # 【Claude修改】esp_crt_bundle 内置CA证书仓库
+        lwip          # socket API（tcp_server.c 用）
+        mqtt          # esp-mqtt（mqtt_client.c 用）
+        mbedtls       # esp_crt_bundle 内置CA证书仓库
+        esp_http_server  # 网页服务器（web_server.c 用）
         nvs_flash
 )

@@ -200,7 +200,7 @@ function parseData(line) {
   if (!m) return null;
   const nums = m[1].split(/[\s,]+/).filter(s => s !== '').map(s => parseInt(s, 10));
   if (nums.length < ROWS * COLS || nums.some(isNaN)) return null;
-  // 【Claude修改】新固件格式是 DATA:时间戳,12个值（共13个数）。
+  // 新固件格式是 DATA:时间戳,12个值（共13个数）。
   // 取"最后12个数" → 新旧格式（12个或13个）都能正确解析。
   return nums.slice(-ROWS * COLS);
 }

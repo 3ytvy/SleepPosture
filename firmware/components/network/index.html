@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SleepPosture 监控</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px; background: #161616; color: #eee;
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #link { font-size: 13px; color: #888; text-align: center; margin-bottom: 14px; }
+  #big {
+    font-size: 56px; font-weight: bold; text-align: center; color: #fff;
+    background: #333; border-radius: 18px; padding: 30px 0; margin-bottom: 12px;
+    transition: background-color .3s;
+  }
+  #detail { text-align: center; color: #9ad; font: 15px/1.7 "Courier New", monospace; margin-bottom: 16px; }
+  h3 { font-size: 14px; color: #888; margin: 18px 0 8px; font-weight: 500; }
+  #stats { font: 14px/1.9 "Courier New", monospace; color: #7fb2e5; }
+  #events { list-style: none; margin: 0; padding: 0; font: 14px/1.8 "Courier New", monospace; color: #ccc; }
+  #events li { border-bottom: 1px solid #2a2a2a; padding: 5px 0; }
+</style>
+</head>
+<body>
+
+<div id="link">正在连接设备…</div>
+<div id="big">--</div>
+<div id="detail">等待数据</div>
+
+<h3>本次会话统计（各状态累计时长）</h3>
+<div id="stats">--</div>
+
+<h3>状态变化记录</h3>
+<ul id="events"><li>暂无</li></ul>
+
+<script>
+// 状态定义：posture值 → [名字, 颜色]（和固件/电脑端一致）
+const STATES = {
+  0:   ["仰卧", "#1b7a1b"],
+  1:   ["左侧卧", "#1565c0"],
+  2:   ["右侧卧", "#6a1b9a"],
+  255: ["离床", "#555555"]
+};
+
+let cur = null;            // 当前状态
+let lastChange = null;     // 状态变化时刻（秒，Date.now()/1000）
+let durations = {0: 0, 1: 0, 2: 0, 255: 0};   // 各状态累计秒数
+let evCount = 0;           // 事件条数
+
+function fmtDur(s) {
+  s = Math.floor(s);
+  if (s < 60) return s + "秒";
+  if (s < 3600) return Math.floor(s / 60) + "分" + String(s % 60).padStart(2, "0") + "秒";
+  return Math.floor(s / 3600) + "小时" + String(Math.floor((s % 3600) / 60)).padStart(2, "0") + "分";
+}
+
+function onData(d) {
+  // 连上了
+  const link = document.getElementById("link");
+  link.textContent = "已连接设备 ✓";
+  link.style.color = "#4caf50";
+
+  if (!d || !d.ready) return;      // 设备还没出过结果
+
+  const now = Date.now() / 1000;
+
+  if (d.posture !== cur) {
+    // 结算上一个状态的时长
+    if (cur !== null && lastChange !== null) {
+      durations[cur] += now - lastChange;
+    }
+    // 记录事件
+    const prev = (cur === null) ? "（无）" : STATES[cur][0];
+    const li = document.createElement("li");
+    const t = new Date();
+    li.textContent = "[" + t.toTimeString().slice(0, 8) + "] "
+                   + prev + " → " + STATES[d.posture][0]
+                   + "（置信度" + d.confidence + "%）";
+    const ul = document.getElementById("events");
+    if (evCount === 0) ul.innerHTML = "";     // 去掉"暂无"
+    ul.prepend(li);
+    evCount++;
+    if (evCount > 50) ul.lastChild.remove();  // 只留最近50条
+
+    cur = d.posture;
+    lastChange = now;
+  }
+
+  // 大屏
+  const big = document.getElementById("big");
+  big.textContent = STATES[d.posture][0];
+  big.style.background = STATES[d.posture][1];
+  document.getElementById("detail").textContent =
+    "置信度 " + d.confidence + "%";
+}
+
+// 每秒刷新统计（当前状态还在累计中，时间要实时走）
+function tick() {
+  const parts = [];
+  for (const s of [0, 1, 2, 255]) {
+    let v = durations[s];
+    if (s === cur && lastChange !== null) v += Date.now() / 1000 - lastChange;
+    parts.push(STATES[s][0] + " " + fmtDur(v));
+  }
+  document.getElementById("stats").textContent = parts.join(" | ");
+}
+setInterval(tick, 1000);
+
+// 每秒向ESP32要一次最新状态
+async function poll() {
+  try {
+    const r = await fetch("/state", { cache: "no-store" });
+    onData(await r.json());
+  } catch (e) {
+    const link = document.getElementById("link");
+    link.textContent = "连接中断（检查手机是否连了同一个WiFi）";
+    link.style.color = "#d32f2f";
+  }
+}
+setInterval(poll, 1000);
+poll();
+</script>
+</body>
+</html>

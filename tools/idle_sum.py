@@ -189,7 +189,7 @@ class App:
                                   font=("Consolas", 28, "bold"))
         self.sum_label.pack(side="left")
 
-        # 【Claude修改】12路小网格：每个点位显示"名字 + 实时数值"，
+        # 12路小网格：每个点位显示"名字 + 实时数值"，
         # 能直接看出是哪一路在漂
         grid_frame = tk.Frame(mid, bg="#1e1e1e")
         grid_frame.pack(side="left", padx=20)

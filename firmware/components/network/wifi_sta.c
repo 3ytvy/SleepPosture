@@ -21,8 +21,8 @@
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_netif.h"
-#include "esp_netif_sntp.h"    // 【Claude修改】SNTP时间同步（TLS证书校验需要准确时间）
-#include <stdbool.h>           // 【Claude修改】bool
+#include "esp_netif_sntp.h"    // SNTP时间同步（TLS证书校验需要准确时间）
+#include <stdbool.h>           // bool
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
@@ -44,12 +44,12 @@ static const char *TAG = "wifi_sta";
 // 这里用一个位：
 //   WIFI_CONNECTED_BIT ：已连接并获取IP（断开时会被清掉）
 #define WIFI_CONNECTED_BIT  BIT0
-// 【Claude修改】原来还有一个 WIFI_FAIL_BIT（重试5次后放弃）。
+// 原来还有一个 WIFI_FAIL_BIT（重试5次后放弃）。
 // 设备要长期无人值守，路由器半夜重启后必须能自己连回来，所以改成无限重连，
 // FAIL 位不再需要，已删除。
 
 static EventGroupHandle_t s_wifi_event_group = NULL;    // WiFi连接事件组句柄
-static int s_retry_num = 0;                    // 【Claude修改】只用于日志节流（每5次打一条），不再用于"放弃"
+static int s_retry_num = 0;                    // 只用于日志节流（每5次打一条），不再用于"放弃"
 
 // ============================================================
 // WiFi事件处理函数
@@ -71,11 +71,11 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     // WiFi事件：STA断开
     // --------------------------------------------------------
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        // 【Claude修改】断开的第一件事：清掉"已连接"标志。
+        // 断开的第一件事：清掉"已连接"标志。
         // 不清的话，断线期间 wifi_sta_is_connected() 会一直返回1（说谎）。
         xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
 
-        // 【Claude修改】无限重连：设备长期无人值守，路由器重启后必须能自己连回来。
+        // 无限重连：设备长期无人值守，路由器重启后必须能自己连回来。
         // s_retry_num 只用于控制日志频率（每5次打印一条），不再用于"放弃"。
         // 顺便打印断开原因码（reason），方便排查：
         //   15=密码错误，201=找不到路由器(信号弱/用了5G频段)，200=beacon超时
@@ -95,7 +95,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         ESP_LOGI(TAG, "获取IP: " IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;  // 重置重试计数
 
-        // 【Claude修改】同步网络时间（第一次拿到IP时启动一次）：
+        // 同步网络时间（第一次拿到IP时启动一次）：
         //   TLS证书校验需要准确的系统时钟——没有时间的话，
         //   证书会被认为"还没生效"，MQTT(TLS)握手会失败。
         static bool sntp_started = false;
@@ -201,7 +201,7 @@ int wifi_sta_connect(void)
 
     ESP_LOGI(TAG, "等待WiFi连接...");
 
-    // 【Claude修改】无限重连模式下不再有"失败放弃"，所以只等"已连接"这一个位。
+    // 无限重连模式下不再有"失败放弃"，所以只等"已连接"这一个位。
     // 参数：
     //   xEventGroupWaitBits(事件组, 等待哪些位, 是否清除位, 是否全部满足, 超时)
     //   pdFALSE：不清除标志位（后面wifi_sta_is_connected要查）

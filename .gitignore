@@ -22,4 +22,8 @@ Thumbs.db
 *.tmp
 
 # 笔记
+*.md
 SleepPosture_Notes/
+
+# 练习
+practice/

@@ -233,6 +233,19 @@ void ai_task(void *pvParam)
         // ----------------------------------------------------
         // 10. 上报：串口日志 + result_queue
         // ----------------------------------------------------
+        // 三个类别各自的概率（0~100）：把本帧模型输出全部反量化。
+        // 注意：probs 是"本帧原始判定"的概率；posture 是50帧投票后的稳定状态，
+        //       过渡期间两者可能不同步。离床帧没有跑模型 → 三个概率记0。
+        result.probs[0] = result.probs[1] = result.probs[2] = 0;
+        if (raw_state != POSTURE_OFF_BED) {
+            for (int i = 0; i < POSTURE_CLASSES; i++) {
+                float p = ((float)output->data.int8[i] - out_zp) * out_scale;
+                if (p < 0.0f) p = 0.0f;
+                if (p > 1.0f) p = 1.0f;
+                result.probs[i] = (uint8_t)(p * 100.0f + 0.5f);
+            }
+        }
+
         result.posture = stable_state;
         result.confidence = (uint8_t)(prob * 100.0f + 0.5f);
         result.timestamp = frame.timestamp;

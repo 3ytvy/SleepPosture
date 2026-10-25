@@ -82,11 +82,14 @@ void mqtt_task(void *pvParam)
         }
 
         // 组装JSON：posture=数字(0/1/2/255) name=英文名 confidence=置信度 timestamp=开机毫秒
+        // probs=三个类别各自的概率（0~100，离床帧为0）
         char json[192];
         snprintf(json, sizeof(json),
-                 "{\"posture\":%d,\"name\":\"%s\",\"confidence\":%d,\"timestamp\":%u}",
+                 "{\"posture\":%d,\"name\":\"%s\",\"confidence\":%d,\"timestamp\":%u,"
+                 "\"probs\":[%d,%d,%d]}",
                  (int)result.posture, posture_name(result.posture),
-                 result.confidence, (unsigned)result.timestamp);
+                 result.confidence, (unsigned)result.timestamp,
+                 result.probs[0], result.probs[1], result.probs[2]);
 
         int msg_id = mqtt_client_publish(json);
         if (msg_id >= 0) {

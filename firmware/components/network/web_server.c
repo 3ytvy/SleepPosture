@@ -58,14 +58,28 @@ static esp_err_t root_handler(httpd_req_t *req)
 static esp_err_t state_handler(httpd_req_t *req)
 {
     posture_result_t r;
-    char json[160];
+    pressure_frame_t f;
+    char json[320];
+    char vals[160] = "[]";
 
     if (status_store_get(&r)) {
+        // 最近一帧原始12路值（手机网页显示用）
+        if (status_store_get_frame(&f)) {
+            snprintf(vals, sizeof(vals),
+                     "[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d]",
+                     f.pressure[0], f.pressure[1], f.pressure[2],
+                     f.pressure[3], f.pressure[4], f.pressure[5],
+                     f.pressure[6], f.pressure[7], f.pressure[8],
+                     f.pressure[9], f.pressure[10], f.pressure[11]);
+        }
+        // probs：三个类别各自的概率（离床帧为0）；vals：最近一帧12路原始值
         snprintf(json, sizeof(json),
                  "{\"ready\":true,\"posture\":%d,\"name\":\"%s\","
-                 "\"confidence\":%d,\"timestamp\":%u}",
+                 "\"confidence\":%d,\"timestamp\":%u,"
+                 "\"probs\":[%d,%d,%d],\"vals\":%s}",
                  (int)r.posture, state_name(r.posture),
-                 r.confidence, (unsigned)r.timestamp);
+                 r.confidence, (unsigned)r.timestamp,
+                 r.probs[0], r.probs[1], r.probs[2], vals);
     } else {
         snprintf(json, sizeof(json), "{\"ready\":false}");
     }

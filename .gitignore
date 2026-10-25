@@ -23,6 +23,7 @@ Thumbs.db
 
 # 笔记
 *.md
+!README.md
 SleepPosture_Notes/
 
 # 练习

@@ -99,5 +99,6 @@ typedef struct {
 typedef struct {
     uint8_t posture;                   // 睡姿类别
     uint8_t confidence;                // 置信度（0~100）
+    uint8_t probs[POSTURE_CLASSES];    // 三个类别各自的概率（0~100；离床帧为0）
     uint32_t timestamp;                // 时间戳（ms）
 } posture_result_t;

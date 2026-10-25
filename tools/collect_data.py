@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-collect_data.py — SleepPosture 数据采集工具（可视化 + 打标签 + 存CSV）
+collect_data.py — SleepPosture 数据采集工具（电脑键盘版：可视化 + 打标签 + 存CSV）
 
 功能：
     1. 连接ESP32的TCP服务器，实时接收12路压力数据
@@ -11,13 +11,15 @@ collect_data.py — SleepPosture 数据采集工具（可视化 + 打标签 + �
        时间到了响铃3秒 → 自动结束 → 弹保存确认窗口
     5. 断线自动重连
 
-【 2026-10-08】本版新增：定时采集、结束弹"确认保存"窗口。
-    规则：每次采集结束（手动按空格结束 / 定时自动结束）都会弹窗确认是否保存。
-    每次确认保存 = 单独一个CSV文件（丢弃则不落盘）。
+【架构】数据层已抽到 collect_core.py，本文件只负责 tkinter 界面与交互。
+    另一个入口 web_collect.py（手机网页遥控）使用同一个核心——
+    两个入口的采集行为、CSV格式、批次逻辑完全一致。
+    ⚠ 两个入口不要同时运行：ESP32 的TCP服务器只服务一个客户端，
+      后连上的会把先连上的踢掉。
 
 用法：
-    python collect_data.py                  # 用默认IP
-    python collect_data.py 192.168.11.100   # 指定IP
+    python tools/collect_data.py                  # 用默认IP
+    python tools/collect_data.py 192.168.11.110   # 指定IP
 
 按键：
     0 / 1 / 2   切换当前标签（0=仰卧，1=左侧卧，2=右侧卧）
@@ -30,15 +32,8 @@ collect_data.py — SleepPosture 数据采集工具（可视化 + 打标签 + �
         ai/data/posture_<标签>_日期_时间.csv
     格式：timestamp,p0,p1,...,p11,label  （表头全英文，避免Excel乱码）
     （丢弃 → 不写文件；关窗口时若正在采集中 → 自动保存，不弹窗）
-
-架构（为什么这么写）：
-    tkinter 界面只能在主线程操作，而收数据要一直阻塞等待socket。
-    所以用"工作线程收数据 → queue传递 → 主线程定时取出来刷界面"的经典结构。
 """
 
-import csv
-import queue
-import socket
 import sys
 import threading
 import time
@@ -52,124 +47,32 @@ try:
 except ImportError:
     winsound = None
 
+# 引入共享采集核心（与 web_collect.py 共用同一套逻辑）
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import collect_core as core      # noqa: E402
+
 # ============================================================
-# 可调参数
+# 可调参数（数据层参数在 collect_core.py 里）
 # ============================================================
-ESP32_IP = "192.168.11.100"   # 默认IP（看串口"获取IP"那行；IP变了改这里或命令行传入）
-ESP32_PORT = 3333             # 和固件 config.h 的 TCP_SERVER_PORT 一致
-RECONNECT_DELAY_S = 2.0       # 断线后等几秒再重连
 MAX_VALUE = 5000              # 颜色标尺：数值到这个值就是最红（只影响颜色显示）
 PREPARE_SECONDS = 5           # 定时模式：按空格后等几秒才开始（躺好/摆姿势用的缓冲）
 DEFAULT_DURATION_S = 120      # 定时模式：默认采集时长（秒）
 
-# 项目根目录 = 本文件(tools/)的上一级；数据统一存到 ai/data/
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = PROJECT_ROOT / "ai" / "data"
-
-# 标签体系定为三类：0=仰卧，1=左侧卧，2=右侧卧（不要俯卧了）
-POSTURE_NAMES = {0: "仰卧", 1: "左侧卧", 2: "右侧卧", -1: "未标注"}
-
-# 4×3 网格的名字（和接线表一致：C0=肩左 … C11=臀右）
-GRID_NAMES = [
-    "肩左 C0", "肩中 C1", "肩右 C2",
-    "背左 C3", "背中 C4", "背右 C5",
-    "腰左 C6", "腰中 C7", "腰右 C8",
-    "臀左 C9", "臀中 C10", "臀右 C11",
-]
+# 这些名字从核心模块转出来用，保持本文件里代码可读性
+ESP32_IP = core.ESP32_IP
+ESP32_PORT = core.ESP32_PORT
+RECONNECT_DELAY_S = core.RECONNECT_DELAY_S
+DATA_DIR = core.DATA_DIR
+POSTURE_NAMES = core.POSTURE_NAMES
+GRID_NAMES = core.GRID_NAMES
 
 # ============================================================
-# 线程间通信
+# 采集核心实例与线程间通信
 # ============================================================
-msg_q = queue.Queue()   # 工作线程 → 主线程 的消息队列
-
-
-class State:
-    """线程间共享的小状态（CPython下读写这些简单变量是安全的）"""
-    def __init__(self):
-        self.stop = False                 # 请求退出
-        self.reconnect_requested = False  # 请求立刻重连（用户点了"重连"按钮）
-        self.label = -1                   # 当前标签
-        self.ip = ESP32_IP                # 当前目标IP（可以在界面上改）
-
-
-state = State()
-
-
-# ============================================================
-# 工作线程：连接 → 收数据 → 断线自动重连（无限循环）
-# ============================================================
-def recv_worker():
-    while not state.stop:
-        ip = state.ip
-        msg_q.put(("status", "connecting", ip))
-
-        sock = None
-        try:
-            sock = socket.create_connection((ip, ESP32_PORT), timeout=5)
-            sock.settimeout(0.5)
-            msg_q.put(("status", "connected", ip))
-
-            buf = b""   # 接收缓冲：TCP是字节流，"一行数据"可能被拆成多段到达，
-                        # 也可能一次到达好几行——必须自己按 \n 拆
-            closed_reason = "连接被关闭"
-            while not state.stop:
-                if state.reconnect_requested:
-                    state.reconnect_requested = False
-                    closed_reason = "手动重连"
-                    break
-                try:
-                    data = sock.recv(4096)
-                except socket.timeout:
-                    continue
-                if not data:
-                    break
-                buf += data
-                while b"\n" in buf:
-                    line, buf = buf.split(b"\n", 1)
-                    parsed = parse_line(line)
-                    if parsed:
-                        msg_q.put(("frame", parsed[0], parsed[1]))
-
-            msg_q.put(("status", "disconnected", closed_reason))
-        except Exception as e:
-            msg_q.put(("status", "disconnected", f"{e}"))
-        finally:
-            if sock:
-                try:
-                    sock.close()
-                except OSError:
-                    pass
-
-        if not state.stop:
-            time.sleep(RECONNECT_DELAY_S)
-
-
-def parse_line(raw: bytes):
-    """解析一行：DATA:时间戳,p0..p11 → (时间戳, [12个值])；格式不对返回None"""
-    text = raw.decode("utf-8", errors="ignore").strip()
-    if not text.startswith("DATA:"):
-        return None
-    parts = text[5:].split(",")
-    if len(parts) != 13:
-        return None
-    try:
-        ts = int(parts[0])
-        vals = [int(x) for x in parts[1:]]
-    except ValueError:
-        return None
-    return ts, vals
-
-
-def write_rows(path: Path, rows):
-    """把 [(ts, [12个值], label), ...] 写成CSV（独立函数，方便测试）
-
-    格式：timestamp,p0,p1,...,p11,label   （表头全英文，避免Excel乱码）
-    """
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(["timestamp"] + [f"p{i}" for i in range(12)] + ["label"])
-        for ts, vals, lab in rows:
-            w.writerow([ts] + list(vals) + [lab])
+# 全局唯一的采集器：负责连ESP32、收帧、批次缓冲
+# emit_events=True：每帧/连接状态变化都会放进 msg_q，供界面轮询
+state = core.Collector(emit_events=True)
+msg_q = state.msg_q           # 工作线程 → 主线程 的消息队列
 
 
 def play_ring():
@@ -198,12 +101,11 @@ class App:
         root.title("SleepPosture 数据采集")
         root.configure(bg="#1e1e1e")
 
-        # ---------- 采集状态机（三种状态） ----------
+        # ---------- 采集状态机（界面的三种状态；批次数据在 core 里） ----------
         #   idle      ：待机（没在采集）
         #   prepare   ：定时模式的倒计时中（还没开始采集）
-        #   recording ：采集中
+        #   recording ：采集中（core.begin_burst() 已调用）
         self.phase = "idle"
-        self.burst_rows = []            # 本次采集的数据 [(ts, 12个值, label), ...]
         self.burst_duration = None      # 本次定时时长（秒）；None=手动模式不限时
         self.countdown_remain = 0       # 倒计时剩余秒数
         self.countdown_timer = None     # 倒计时用的 after 定时器
@@ -245,7 +147,7 @@ class App:
                                     padx=10, pady=4)
         self.rec_display.pack(side="right", padx=8)
 
-        # ---------- 第二行：定时采集选项（新增） ----------
+        # ---------- 第二行：定时采集选项 ----------
         opt = tk.Frame(root, bg="#1e1e1e")
         opt.pack(fill="x", padx=10, pady=2)
 
@@ -369,8 +271,9 @@ class App:
 
     def begin_recording(self, duration):
         """真正开始采集。duration=秒数(定时模式) 或 None(手动模式)"""
+        if not state.begin_burst():
+            return
         self.phase = "recording"
-        self.burst_rows = []
         self.burst_duration = duration
         self.update_rec_display()
         self.session_label.config(text="采集中：等待数据…")
@@ -388,6 +291,7 @@ class App:
         """结束采集（auto=True表示定时自动结束；False表示手动按空格）"""
         if self.phase != "recording":
             return
+        rows = state.end_burst()          # 从核心取出本批次数据
         self.phase = "idle"
         self._cancel_timer("burst_timer")
         self.update_rec_display()
@@ -395,12 +299,11 @@ class App:
         if auto:
             play_ring()   # 定时到时：响铃3秒（后台线程）
 
-        self.session_label.config(text=f"本次采集 {len(self.burst_rows)} 行，请确认保存…")
-        self.confirm_save()
+        self.session_label.config(text=f"本次采集 {len(rows)} 行，请确认保存…")
+        self.confirm_save(rows)
 
-    def confirm_save(self):
+    def confirm_save(self, rows):
         """弹出保存确认窗口：保存 → 写CSV；丢弃 → 什么都不写"""
-        rows = self.burst_rows
         if not rows:
             messagebox.showwarning("没有数据", "本次采集没有收到任何数据，已取消。")
             self.session_label.config(text="本次无数据")
@@ -430,7 +333,7 @@ class App:
             f"【是】保存    【否】丢弃")
 
         if ok:
-            write_rows(fname, rows)
+            core.write_rows(fname, rows)
             self.saved += n
             for k, v in dist.items():
                 self.label_counts[k] += v
@@ -439,8 +342,6 @@ class App:
             self.session_label.config(text=f"已保存 {n} 行 → {fname.name}")
         else:
             self.session_label.config(text=f"已丢弃本次 {n} 行")
-
-        self.burst_rows = []
 
     def _cancel_timer(self, attr):
         """取消一个 after 定时器（如果存在）"""
@@ -476,8 +377,9 @@ class App:
     def on_reconnect_click(self):
         new_ip = self.ip_var.get().strip()
         if new_ip:
-            state.ip = new_ip
-        state.reconnect_requested = True
+            state.set_ip(new_ip)          # 换IP并触发重连
+        else:
+            state.request_reconnect()     # IP没变，仅重连
         self.root.focus_set()   # 点完按钮把焦点还给主窗口（空格要能用）
 
     def _refocus(self):
@@ -489,17 +391,19 @@ class App:
         self._cancel_timer("countdown_timer")
         self._cancel_timer("burst_timer")
 
-        if self.phase == "recording" and self.burst_rows:
-            DATA_DIR.mkdir(parents=True, exist_ok=True)
-            lab = self.burst_rows[-1][2]
-            labname = str(lab) if lab >= 0 else "x"
-            fname = DATA_DIR / f"posture_{labname}_{datetime.now():%Y%m%d_%H%M%S}.csv"
-            try:
-                write_rows(fname, self.burst_rows)
-            except OSError:
-                pass
+        if self.phase == "recording":
+            rows = state.end_burst()
+            if rows:
+                DATA_DIR.mkdir(parents=True, exist_ok=True)
+                lab = rows[-1][2]
+                labname = str(lab) if lab >= 0 else "x"
+                fname = DATA_DIR / f"posture_{labname}_{datetime.now():%Y%m%d_%H%M%S}.csv"
+                try:
+                    core.write_rows(fname, rows)
+                except OSError:
+                    pass
 
-        state.stop = True
+        state.shutdown()
         self.root.destroy()
 
     # ==================== 定时轮询消息队列 ====================
@@ -513,12 +417,12 @@ class App:
                 elif msg[0] == "frame":
                     _, ts, vals = msg
                     self.on_frame(ts, vals)
-        except queue.Empty:
+        except Exception:
             pass
         self.root.after(40, self.poll)
 
     def on_frame(self, ts, vals):
-        """收到一帧：刷新热力图 + （采集中则）存进本次批次缓冲"""
+        """收到一帧：刷新热力图 + 更新采集中的行数显示"""
         self.received += 1
 
         # 帧率统计：保留最近30帧的到达时间
@@ -531,16 +435,17 @@ class App:
         for i, v in enumerate(vals):
             self.cells[i].config(text=str(v), bg=self.value_to_color(v))
 
-        # 采集中 → 写进本次批次的缓冲（结束确认后才落盘）
+        # 采集中 → 更新"行数/秒数"显示（批次缓冲在 core 里，带当前标签）
         if self.phase == "recording":
-            self.burst_rows.append((ts, vals, state.label))
             self.update_session_label()
 
         self.update_stats()
 
     # ==================== 界面刷新 ====================
     def set_status(self, what, info):
-        if what == "connecting":
+        if what == "waiting":
+            self.status_label.config(text="等待IP…", bg="#8a6d00")
+        elif what == "connecting":
             self.status_label.config(text=f"重连中… ({info})", bg="#8a6d00")
         elif what == "connected":
             self.status_label.config(text=f"已连接 ({info})", bg="#1b7a1b")
@@ -565,11 +470,12 @@ class App:
 
     def update_session_label(self):
         """采集中：显示 行数 / 已采秒数 / 剩余秒数（定时模式）"""
-        n = len(self.burst_rows)
+        st = state.status()
+        n = st["burst_rows"]
         if n == 0:
             self.session_label.config(text="采集中：等待数据…")
             return
-        dur = (self.burst_rows[-1][0] - self.burst_rows[0][0]) / 1000.0
+        dur = st["burst_seconds"]
         text = f"采集中：{n} 行 / {dur:.0f} 秒"
         if self.burst_duration:
             remain = self.burst_duration - dur
@@ -612,9 +518,8 @@ def main():
     root = tk.Tk()
     App(root)
 
-    # 启动工作线程（daemon=True：主线程退出时它自动结束）
-    worker = threading.Thread(target=recv_worker, daemon=True)
-    worker.start()
+    # 启动采集核心的后台收数线程
+    state.start()
 
     root.mainloop()
 

@@ -20,6 +20,7 @@
 #include "mux.h"
 #include "ads1115.h"
 #include "tcp_server.h"     // TCP发送
+#include "status_store.h"   // 把"最近一帧"共享给网页(/state 显示12路值)
 #include "esp_log.h"
 #include "esp_timer.h"      // esp_timer_get_time()：取开机毫秒数
 #include "freertos/FreeRTOS.h"
@@ -86,6 +87,7 @@ void sensor_task(void *pvParam)
             }
             frame.timestamp = ts;
             xQueueSend(sensor_queue, &frame, 0);
+            status_store_set_frame(&frame);   // 更新"最近一帧"快照（网页 /state 用）
         }
 
         // ----------------------------------------------------

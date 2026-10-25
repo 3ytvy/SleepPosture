@@ -21,7 +21,7 @@
 
 |            手机遥控采集（选标签 / 开始 / 停止保存）             |
 | :--------------------------------------------: |
-| <img width="1080" height="2388" alt="0b0207c2109eb4d5704b9d1621772fa6" src="https://github.com/user-attachments/assets/0dc09282-86e0-4355-85cd-1cb4460cdff6" /> |
+| <img width="360" height="796" alt="0b0207c2109eb4d5704b9d1621772fa6" src="https://github.com/user-attachments/assets/0dc09282-86e0-4355-85cd-1cb4460cdff6" /> |
 
 
 ---

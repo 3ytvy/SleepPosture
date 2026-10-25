@@ -1,4 +1,4 @@
-<img width="1235" height="2747" alt="Pasted image 20261025173231" src="https://github.com/user-attachments/assets/0b96b6c1-9e79-4034-a7aa-a2eb48fe6500" /># SleepPosture
+# SleepPosture
 
 **智能床垫睡姿监测系统** —— ESP32-S3 + 12 路 FSR 压力阵列 + 端侧 TinyML，实时识别「仰卧 / 左侧卧 / 右侧卧 / 离床」，经 MQTT(TLS) 上云，并自带局域网网页控制台。
 
